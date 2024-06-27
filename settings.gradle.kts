@@ -1,0 +1,2 @@
+rootProject.name = "feed-alert"
+
