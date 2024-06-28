@@ -26,9 +26,14 @@ var trayIcon: TrayIcon? = null
 
 fun main() {
     if (!SystemTray.isSupported()) throw RuntimeException("System tray is not supported on this platform.")
-
     try {
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
+        val defaultFont = Font("Arial", Font.PLAIN, 14)
+        UIManager.put("Label.font", defaultFont)
+        UIManager.put("Button.font", defaultFont)
+        UIManager.put("CheckBox.font", defaultFont)
+        UIManager.put("TextField.font", defaultFont)
+        UIManager.put("Spinner.font", defaultFont)
     } catch (e: Exception) {
         e.printStackTrace()
     }
@@ -43,9 +48,6 @@ fun main() {
 
 fun createTrayIcon(actions: Map<String, ActionListener>): TrayIcon {
     val tray = SystemTray.getSystemTray()
-    val iconUrl:URL? = {}::class.java.getResource("/icon.png")
-    if (iconUrl == null)  throw RuntimeException("Icon resource not found")
-    val iconImage = ImageIcon(iconUrl).image
 
     val popup = PopupMenu()
 
@@ -55,10 +57,19 @@ fun createTrayIcon(actions: Map<String, ActionListener>): TrayIcon {
         popup.add(menuItem)
     }
 
-    val trayIcon = TrayIcon(iconImage, "rss-alert", popup)
+    val trayIcon = TrayIcon(getAppIcon(), "rss-alert", popup)
     trayIcon.isImageAutoSize = true
     tray.add(trayIcon)
     return trayIcon
+}
+
+private fun getAppIcon(): Image {
+    val iconUrl: URL? = {}::class.java.getResource("/icon.png")
+    if (iconUrl == null) {
+        throw RuntimeException()
+    }
+    val iconImage: Image = ImageIcon(iconUrl).image
+    return iconImage
 }
 
 val task = Runnable {
@@ -72,15 +83,15 @@ val task = Runnable {
         val rssEntry = nextToRead.rssEntry
         val firstRssEntry = readFirstEntry(rssEntry.url)
         val firstRssEntryTitle = firstRssEntry.title.orElse("")
+        println("Comparing titles: '${nextToRead.title}' and '$firstRssEntryTitle'")
         if (!firstRssEntryTitle.equals(nextToRead.title)) {
             println("Title changed!!!")
-            println("was '$nextToRead.title' and now is '$firstRssEntryTitle'")
+            println("was '${nextToRead.title}' and now is '$firstRssEntryTitle'")
             trayIcon!!.displayMessage(
                 firstRssEntry.title.orElse("No title"),
                 firstRssEntry.description.orElse("No description"),
                 TrayIcon.MessageType.INFO
             )
-
             if (!rssEntry.disableAfterNotification) {
                 println("Title changed, will Reschedule")
                 addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, firstRssEntryTitle)
@@ -89,7 +100,8 @@ val task = Runnable {
             }
         } else {
             println("Title not changed, will reschedule")
-            addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, firstRssEntryTitle)
+            println("Title not changed, will reschedule")
+            addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, nextToRead.title)
         }
     }
     rescheduleTask()
@@ -115,6 +127,7 @@ val onExit = ActionListener { e: ActionEvent ->
 val onAddFeed = ActionListener { _: ActionEvent ->
     // Create the dialog for adding a feed
     val dialog = JDialog(null as Frame?, "Add Feed", true)
+    dialog.setIconImage(getAppIcon())
     dialog.layout = GridBagLayout()
     val gbc = GridBagConstraints()
     gbc.insets = Insets(10, 10, 10, 10)
@@ -122,16 +135,20 @@ val onAddFeed = ActionListener { _: ActionEvent ->
     gbc.gridy = 0
 
     gbc.gridx = 0
+    gbc.weightx = 0.0
     dialog.add(JLabel("Feed URL:"), gbc)
 
     gbc.gridx = 1
+    gbc.weightx = 1.0
     val feedUrlField = JTextField(20)
     dialog.add(feedUrlField, gbc)
 
     gbc.gridx = 2
+    gbc.weightx = 0.0
     dialog.add(JLabel("Polling time (seconds):"), gbc)
 
     gbc.gridx = 3
+    gbc.weightx = 0.0
     val feedPollingTimeModel: SpinnerModel = SpinnerNumberModel(
         300,
         0,
@@ -139,13 +156,18 @@ val onAddFeed = ActionListener { _: ActionEvent ->
         1
     )
     val pollingTimeField = JSpinner(feedPollingTimeModel)
+    pollingTimeField.preferredSize = Dimension(50, pollingTimeField.preferredSize.height)
     dialog.add(pollingTimeField, gbc)
 
     gbc.gridx = 4
+
+    gbc.weightx = 0.0
     val disableAfterNotifyCheckbox = JCheckBox("Disable after notify:", true)
     dialog.add(disableAfterNotifyCheckbox, gbc)
 
     gbc.gridx = 5
+
+    gbc.weightx = 0.0
     gbc.anchor = GridBagConstraints.CENTER
     val saveButton = JButton("Save")
     saveButton.addActionListener {
@@ -153,23 +175,7 @@ val onAddFeed = ActionListener { _: ActionEvent ->
             val feedUrl = feedUrlField.text
             val pollingTime = pollingTimeField.value as Int
             val disableAfterNotify = disableAfterNotifyCheckbox.isSelected
-
-            // Process the feed entry as needed
-            println("Feed URL: $feedUrl")
-            println("Polling time: $pollingTime seconds")
-            println("Disable after notify: $disableAfterNotify")
-
-            val firstRssEntry = readFirstEntry(feedUrl)
-
-            val rssEntry = RssEntry(feedUrl, pollingTime, disableAfterNotify)
-            rssEntries.add(rssEntry)
-            addNewSchedule(pollingTime, rssEntry, firstRssEntry.title.orElse(""))
-
-            rescheduleTask()
-            println("rssEntries")
-            println(rssEntries)
-            println("schedule")
-            println(schedule)
+            addNewFeed(feedUrl, pollingTime, disableAfterNotify)
         }
         dialog.dispose()
     }
@@ -179,6 +185,25 @@ val onAddFeed = ActionListener { _: ActionEvent ->
     dialog.pack()
     dialog.setLocationRelativeTo(null)  // Center the dialog
     dialog.isVisible = true
+}
+
+private fun addNewFeed(feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) {
+    println("Feed URL: $feedUrl")
+    println("Polling time: $pollingTime seconds")
+    println("Disable after notify: $disableAfterNotify")
+
+    val firstRssEntry = readFirstEntry(feedUrl)
+
+    val rssEntry = RssEntry(feedUrl, pollingTime, disableAfterNotify)
+    rssEntries.add(rssEntry)
+    addNewSchedule(pollingTime, rssEntry, firstRssEntry.title.orElse(""))
+
+    rescheduleTask()
+
+    println("rssEntries")
+    println(rssEntries)
+    println("schedule")
+    println(schedule)
 }
 
 private fun addNewSchedule(pollingIntervalInSeconds: Int, rssEntry: RssEntry, firstRssEntryTitle: String) {
