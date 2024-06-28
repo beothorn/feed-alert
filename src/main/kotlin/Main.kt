@@ -1,5 +1,6 @@
 import java.awt.*
 import java.awt.event.ActionEvent
+import java.net.URL
 import javax.swing.ImageIcon
 
 fun main() {
@@ -14,8 +15,13 @@ fun createTrayIcon() {
     try {
         val tray = SystemTray.getSystemTray()
 
-        // Create an image icon
-        val iconImage = ImageIcon("path_to_your_icon.png").image
+        // Ensure the path is correctly resolved
+        val iconUrl:URL? = {}::class.java.getResource("/icon.png")
+        if (iconUrl == null) {
+            throw RuntimeException("Icon resource not found")
+        }
+
+        val iconImage = ImageIcon(iconUrl).image
 
         // Create popup menu
         val popup = PopupMenu()
