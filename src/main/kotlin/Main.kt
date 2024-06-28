@@ -1,7 +1,10 @@
+import com.apptasticsoftware.rssreader.Item
+import com.apptasticsoftware.rssreader.RssReader
 import java.awt.*
 import java.awt.event.ActionEvent
 import java.net.URL
 import javax.swing.ImageIcon
+
 
 fun main() {
     if (SystemTray.isSupported()) {
@@ -9,6 +12,10 @@ fun main() {
     } else {
         println("System tray is not supported on this platform.")
     }
+
+    val rssReader = RssReader()
+    val items: List<Item> = rssReader.read("https://stackexchange.com/feeds/questions").toList()
+    println(items.map {it.title} )
 }
 
 fun createTrayIcon() {

@@ -10,6 +10,7 @@ repositories {
 }
 
 dependencies {
+    implementation("com.apptasticsoftware:rssreader:3.7.0")
     testImplementation(kotlin("test"))
 }
 
