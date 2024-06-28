@@ -162,7 +162,7 @@ val onAddFeed = ActionListener { _: ActionEvent ->
     gbc.gridx = 4
 
     gbc.weightx = 0.0
-    val disableAfterNotifyCheckbox = JCheckBox("Disable after notify:", true)
+    val disableAfterNotifyCheckbox = JCheckBox("Disable after notify", true)
     dialog.add(disableAfterNotifyCheckbox, gbc)
 
     gbc.gridx = 5
