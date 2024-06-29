@@ -43,7 +43,7 @@ var scheduledFuture: ScheduledFuture<*> = scheduler.schedule({}, 5, SECONDS)
 var trayIcon: TrayIcon? = null
 val menuItemEditFeeds = MenuItem("Delete Feeds")
 
-val version = "1.0-SNAPSHOT"
+val version = "1.0"
 
 var rssFile: File? = null
 
