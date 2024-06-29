@@ -4,29 +4,44 @@ import java.awt.*
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
 import java.lang.System.currentTimeMillis
+import java.net.URI
 import java.net.URL
 import java.util.*
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.concurrent.TimeUnit.SECONDS
 import javax.swing.*
 import kotlin.system.exitProcess
 
-
 data class RssEntry(val url: String, val pollingIntervalInSeconds: Int, val deleteAfterNotification: Boolean)
 data class RssEntryWithSchedule(val triggerAtTimestamp: Long, val rssEntry: RssEntry, val title: String)
 
 val rssEntries = arrayListOf<RssEntry>()
 
-val comparator = compareBy<RssEntryWithSchedule> { it.triggerAtTimestamp }
-val schedule = PriorityQueue(comparator)
-val scheduler = Executors.newScheduledThreadPool(1)
+val schedule = PriorityQueue(compareBy<RssEntryWithSchedule> { it.triggerAtTimestamp })
+val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(1)
 var scheduledFuture: ScheduledFuture<*> = scheduler.schedule({}, 5, SECONDS)
 var trayIcon: TrayIcon? = null
 
 fun main() {
     if (!SystemTray.isSupported()) throw RuntimeException("System tray is not supported on this platform.")
+    setupLookAndFeel()
+
+    val actions = mapOf(
+        "Edit Feed" to onEditFeed,
+        "Add Feed" to onAddFeed,
+        "Exit" to onExit
+    )
+
+    trayIcon = createTrayIcon(actions)
+}
+
+val onAddFeed = ActionListener { _: ActionEvent -> showAddFeed(getAppIcon(), addNewFeed) }
+val onEditFeed = ActionListener { _: ActionEvent -> showEditFeed(getAppIcon(), rssEntries, removeFeed) }
+
+private fun setupLookAndFeel() {
     try {
         UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName())
         val defaultFont = Font("Arial", Font.PLAIN, 14)
@@ -38,14 +53,6 @@ fun main() {
     } catch (e: Exception) {
         e.printStackTrace()
     }
-
-    val actions = mapOf(
-        "Edit Feed" to onEditFeed,
-        "Add Feed" to onAddFeed,
-        "Exit" to onExit
-    )
-
-    trayIcon = createTrayIcon(actions)
 }
 
 fun createTrayIcon(actions: Map<String, ActionListener>): TrayIcon {
@@ -89,6 +96,13 @@ val task = Runnable {
         if (!firstRssEntryTitle.equals(nextToRead.title)) {
             println("Title changed!!!")
             println("was '${nextToRead.title}' and now is '$firstRssEntryTitle'")
+            trayIcon!!.addActionListener { _: ActionEvent ->
+                firstRssEntry.link.ifPresent {
+                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                        Desktop.getDesktop().browse(URI(it));
+                    }
+                }
+            }
             trayIcon!!.displayMessage(
                 firstRssEntry.title.orElse("No title"),
                 firstRssEntry.description.orElse("No description"),
@@ -153,11 +167,11 @@ val removeFeed:(String)-> Unit = { feedUrl: String ->
     schedule.removeIf {it.rssEntry.url == feedUrl }
 }
 
-val onAddFeed = ActionListener { _: ActionEvent -> showAddFeed(getAppIcon(), addNewFeed) }
-
-val onEditFeed = ActionListener { _: ActionEvent -> showEditFeed(getAppIcon(), rssEntries, removeFeed) }
-
-private fun addNewSchedule(pollingIntervalInSeconds: Int, rssEntry: RssEntry, firstRssEntryTitle: String) {
+private fun addNewSchedule(
+    pollingIntervalInSeconds: Int,
+    rssEntry: RssEntry,
+    firstRssEntryTitle: String
+) {
     schedule.add(
         RssEntryWithSchedule(
             currentTimeMillis() + (pollingIntervalInSeconds * 1000),

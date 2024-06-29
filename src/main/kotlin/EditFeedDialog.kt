@@ -15,7 +15,6 @@ fun showEditFeed(
         gbc.insets = Insets(10, 10, 10, 10)
         gbc.fill = GridBagConstraints.HORIZONTAL
 
-        // FOR EACH ENTRY ADD ONE LINE
         editableEntries.forEachIndexed { index, entry ->
             gbc.gridy = index
 
