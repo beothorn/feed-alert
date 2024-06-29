@@ -11,9 +11,10 @@ import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.util.concurrent.TimeUnit.SECONDS
 import javax.swing.*
+import kotlin.system.exitProcess
 
 
-data class RssEntry(val url: String, val pollingIntervalInSeconds: Int, val disableAfterNotification: Boolean)
+data class RssEntry(val url: String, val pollingIntervalInSeconds: Int, val deleteAfterNotification: Boolean)
 data class RssEntryWithSchedule(val triggerAtTimestamp: Long, val rssEntry: RssEntry, val title: String)
 
 val rssEntries = arrayListOf<RssEntry>()
@@ -39,6 +40,7 @@ fun main() {
     }
 
     val actions = mapOf(
+        "Edit Feed" to onEditFeed,
         "Add Feed" to onAddFeed,
         "Exit" to onExit
     )
@@ -92,7 +94,7 @@ val task = Runnable {
                 firstRssEntry.description.orElse("No description"),
                 TrayIcon.MessageType.INFO
             )
-            if (!rssEntry.disableAfterNotification) {
+            if (!rssEntry.deleteAfterNotification) {
                 println("Title changed, will Reschedule")
                 addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, firstRssEntryTitle)
             } else {
@@ -121,78 +123,17 @@ fun rescheduleTask() {
 
 
 val onExit = ActionListener { e: ActionEvent ->
-    System.exit(0)
+    exitProcess(0)
 }
 
-val onAddFeed = ActionListener { _: ActionEvent ->
-    // Create the dialog for adding a feed
-    val dialog = JDialog(null as Frame?, "Add Feed", true)
-    dialog.setIconImage(getAppIcon())
-    dialog.layout = GridBagLayout()
-    val gbc = GridBagConstraints()
-    gbc.insets = Insets(10, 10, 10, 10)
-    gbc.fill = GridBagConstraints.HORIZONTAL
-    gbc.gridy = 0
-
-    gbc.gridx = 0
-    gbc.weightx = 0.0
-    dialog.add(JLabel("Feed URL:"), gbc)
-
-    gbc.gridx = 1
-    gbc.weightx = 1.0
-    val feedUrlField = JTextField(20)
-    dialog.add(feedUrlField, gbc)
-
-    gbc.gridx = 2
-    gbc.weightx = 0.0
-    dialog.add(JLabel("Polling time (seconds):"), gbc)
-
-    gbc.gridx = 3
-    gbc.weightx = 0.0
-    val feedPollingTimeModel: SpinnerModel = SpinnerNumberModel(
-        300,
-        0,
-        Int.MAX_VALUE,
-        1
-    )
-    val pollingTimeField = JSpinner(feedPollingTimeModel)
-    pollingTimeField.preferredSize = Dimension(50, pollingTimeField.preferredSize.height)
-    dialog.add(pollingTimeField, gbc)
-
-    gbc.gridx = 4
-
-    gbc.weightx = 0.0
-    val disableAfterNotifyCheckbox = JCheckBox("Disable after notify", true)
-    dialog.add(disableAfterNotifyCheckbox, gbc)
-
-    gbc.gridx = 5
-
-    gbc.weightx = 0.0
-    gbc.anchor = GridBagConstraints.CENTER
-    val saveButton = JButton("Save")
-    saveButton.addActionListener {
-        SwingUtilities.invokeLater {
-            val feedUrl = feedUrlField.text
-            val pollingTime = pollingTimeField.value as Int
-            val disableAfterNotify = disableAfterNotifyCheckbox.isSelected
-            addNewFeed(feedUrl, pollingTime, disableAfterNotify)
-        }
-        dialog.dispose()
-    }
-    dialog.add(saveButton, gbc)
-
-    // Display the dialog
-    dialog.pack()
-    dialog.setLocationRelativeTo(null)  // Center the dialog
-    dialog.isVisible = true
-}
-
-private fun addNewFeed(feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) {
+val addNewFeed:(feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) -> Unit = { feedUrl, pollingTime, disableAfterNotify ->
     println("Feed URL: $feedUrl")
     println("Polling time: $pollingTime seconds")
     println("Disable after notify: $disableAfterNotify")
 
     val firstRssEntry = readFirstEntry(feedUrl)
+
+    removeFeed(feedUrl)
 
     val rssEntry = RssEntry(feedUrl, pollingTime, disableAfterNotify)
     rssEntries.add(rssEntry)
@@ -205,6 +146,16 @@ private fun addNewFeed(feedUrl: String, pollingTime: Int, disableAfterNotify: Bo
     println("schedule")
     println(schedule)
 }
+
+val removeFeed:(String)-> Unit = { feedUrl: String ->
+    println("Removed '$feedUrl'")
+    rssEntries.removeIf { it.url == feedUrl }
+    schedule.removeIf {it.rssEntry.url == feedUrl }
+}
+
+val onAddFeed = ActionListener { _: ActionEvent -> showAddFeed(getAppIcon(), addNewFeed) }
+
+val onEditFeed = ActionListener { _: ActionEvent -> showEditFeed(getAppIcon(), rssEntries, removeFeed) }
 
 private fun addNewSchedule(pollingIntervalInSeconds: Int, rssEntry: RssEntry, firstRssEntryTitle: String) {
     schedule.add(
