@@ -1,7 +1,7 @@
 import java.awt.*
 import javax.swing.*
-import javax.swing.ImageIcon
-fun showEditFeed(
+
+fun showDeleteFeed(
     dialogIcon: Image,
     entries: List<RssEntry>,
     onDeleteFeed: (feedUrl: String) -> Unit
@@ -80,7 +80,7 @@ fun showEditFeed(
         dialog.setLocationRelativeTo(null)
     }
 
-    val dialog = JDialog(null as Frame?, "Edit Feed", true)
+    val dialog = JDialog(null as Frame?, "Delete Feeds", true)
     dialog.setIconImage(dialogIcon)
     dialog.layout = GridBagLayout()
     refreshDialog(dialog)

@@ -1,8 +1,16 @@
 import com.apptasticsoftware.rssreader.Item
 import com.apptasticsoftware.rssreader.RssReader
+import net.harawata.appdirs.AppDirs
+import net.harawata.appdirs.AppDirsFactory
 import java.awt.*
 import java.awt.event.ActionEvent
 import java.awt.event.ActionListener
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.ObjectInputStream
+import java.io.ObjectOutputStream
+import java.io.Serializable
 import java.lang.System.currentTimeMillis
 import java.net.URI
 import java.net.URL
@@ -15,8 +23,17 @@ import java.util.concurrent.TimeUnit.SECONDS
 import javax.swing.*
 import kotlin.system.exitProcess
 
-data class RssEntry(val url: String, val pollingIntervalInSeconds: Int, val deleteAfterNotification: Boolean)
-data class RssEntryWithSchedule(val triggerAtTimestamp: Long, val rssEntry: RssEntry, val title: String)
+data class RssEntry(
+    var url: String,
+    var pollingIntervalInSeconds: Int,
+    var deleteAfterNotification: Boolean
+) : Serializable
+
+data class RssEntryWithSchedule(
+    val triggerAtTimestamp: Long,
+    val rssEntry: RssEntry,
+    val title: String
+)
 
 val rssEntries = arrayListOf<RssEntry>()
 
@@ -26,14 +43,76 @@ var scheduledFuture: ScheduledFuture<*> = scheduler.schedule({}, 5, SECONDS)
 var trayIcon: TrayIcon? = null
 val menuItemEditFeeds = MenuItem("Delete Feeds")
 
+val version = "1.0-SNAPSHOT"
+
+var rssFile: File? = null
+
 fun main() {
     if (!SystemTray.isSupported()) throw RuntimeException("System tray is not supported on this platform.")
+
+    val appDirs: AppDirs = AppDirsFactory.getInstance()
+    val userDataDir = appDirs.getUserDataDir("feed-alert", null, "Beothorn")
+    println(userDataDir)
+    val directory = File(userDataDir)
+    if (!directory.exists()) {
+        directory.mkdirs()
+    }
+    rssFile = File(directory, "rssEntries")
+
+    val entriesFromFile = readEntries()
+    entriesFromFile.forEach { loadEntry(it) }
+
+    println("Loaded ${rssEntries.size} items")
+
     setupLookAndFeel()
     trayIcon = createTrayIcon()
 }
 
+fun saveEntries() {
+    println("Save ${rssEntries.size} items")
+    rssFile?.let {
+        FileOutputStream(it).use { fileOutputStream ->
+            ObjectOutputStream(fileOutputStream).use { objectOutputStream ->
+                objectOutputStream.writeObject(rssEntries)
+            }
+        }
+    }
+}
+
+fun readEntries(): List<RssEntry> {
+    rssFile?.let {
+        if (!rssFile!!.exists()) {
+            return arrayListOf()
+        }
+        FileInputStream(it).use { fileInputStream ->
+            ObjectInputStream(fileInputStream).use { objectInputStream ->
+                @Suppress("unchecked_cast")
+                return objectInputStream.readObject() as List<RssEntry>
+            }
+        }
+    }
+    return arrayListOf()
+}
+
+val onAbout = ActionListener { _: ActionEvent ->
+    val dialog = JDialog(
+        null as Frame?,
+        "About",
+        true
+    )
+    dialog.setIconImage(getAppIcon())
+    dialog.layout = BoxLayout(dialog.contentPane, BoxLayout.Y_AXIS)
+    dialog.add(JLabel("Version $version"))
+    val close = JButton("Close")
+    close.addActionListener { dialog.dispose() }
+    dialog.add(close)
+
+    dialog.pack()
+    dialog.setLocationRelativeTo(null)
+    dialog.isVisible = true
+}
 val onAddFeed = ActionListener { _: ActionEvent -> showAddFeed(getAppIcon(), addNewFeed) }
-val onEditFeed = ActionListener { _: ActionEvent -> showEditFeed(getAppIcon(), rssEntries, removeFeed) }
+val onRemoveFeed = ActionListener { _: ActionEvent -> showDeleteFeed(getAppIcon(), rssEntries, removeFeedAndSave) }
 
 private fun setupLookAndFeel() {
     try {
@@ -54,12 +133,13 @@ fun createTrayIcon(): TrayIcon {
 
     val popup = PopupMenu()
 
-    menuItemEditFeeds.addActionListener(onEditFeed)
+    menuItemEditFeeds.addActionListener(onRemoveFeed)
     popup.add(menuItemEditFeeds)
     menuItemEditFeeds.isEnabled = rssEntries.size > 0
 
     val actions = mapOf(
         "Add Feed" to onAddFeed,
+        "About" to onAbout,
         "Exit" to onExit
     )
 
@@ -105,18 +185,18 @@ val task = Runnable {
                 showNotification(firstRssEntry)
                 if (!rssEntry.deleteAfterNotification) {
                     println("Title changed, will Reschedule")
-                    addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, firstRssEntryTitle)
+                    addNewSchedule(rssEntry, firstRssEntryTitle)
                 } else {
                     println("Title changed, will NOT Reschedule")
                 }
             } else {
                 println("Title not changed, will reschedule")
                 println("Title not changed, will reschedule")
-                addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, nextToRead.title)
+                addNewSchedule(rssEntry, nextToRead.title)
             }
         } else {
             println("Something went wrong getting feed, will reschedule")
-            addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, nextToRead.title)
+            addNewSchedule(rssEntry, nextToRead.title)
         }
     }
     rescheduleTask()
@@ -148,7 +228,7 @@ fun rescheduleTask() {
         nextReadInMillis,
         MILLISECONDS
     )
-    println("Will read again in ${nextReadInMillis/1000} seconds")
+    println("Will read again in ${nextReadInMillis / 1000} seconds")
 }
 
 
@@ -158,48 +238,58 @@ val onExit = ActionListener { _: ActionEvent ->
     exitProcess(0)
 }
 
-val addNewFeed:(feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) -> Unit = { feedUrl, pollingTime, disableAfterNotify ->
-    println("Feed URL: $feedUrl")
-    println("Polling time: $pollingTime seconds")
-    println("Disable after notify: $disableAfterNotify")
+val addNewFeed: (feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) -> Unit =
+    { feedUrl, pollingTime, disableAfterNotify ->
+        println("Feed URL: $feedUrl")
+        println("Polling time: $pollingTime seconds")
+        println("Disable after notify: $disableAfterNotify")
 
-    val firstRssEntryResult = readFirstEntryTitle(feedUrl)
+        val rssEntry = RssEntry(feedUrl, pollingTime, disableAfterNotify)
 
-    removeFeed(feedUrl)
+        loadEntry(rssEntry)
+        saveEntries()
 
-    val rssEntry = RssEntry(feedUrl, pollingTime, disableAfterNotify)
+        rescheduleTask()
+
+        println("rssEntries")
+        println(rssEntries)
+        println("schedule")
+        println(schedule)
+
+        menuItemEditFeeds.isEnabled = rssEntries.size > 0
+    }
+
+private fun loadEntry(rssEntry: RssEntry) {
+    val firstRssEntryResult = readFirstEntryTitle(rssEntry.url)
+    removeFeed(rssEntry.url)
     rssEntries.add(rssEntry)
-    addNewSchedule(pollingTime, rssEntry, firstRssEntryResult)
+    addNewSchedule(rssEntry, firstRssEntryResult)
+}
 
-    rescheduleTask()
-
-    println("rssEntries")
-    println(rssEntries)
-    println("schedule")
-    println(schedule)
-
+val removeFeed: (String) -> Unit = { feedUrl: String ->
+    println("Removed '$feedUrl'")
+    rssEntries.removeIf { it.url == feedUrl }
+    schedule.removeIf { it.rssEntry.url == feedUrl }
     menuItemEditFeeds.isEnabled = rssEntries.size > 0
 }
 
-val removeFeed:(String)-> Unit = { feedUrl: String ->
-    println("Removed '$feedUrl'")
-    rssEntries.removeIf { it.url == feedUrl }
-    schedule.removeIf {it.rssEntry.url == feedUrl }
-    menuItemEditFeeds.isEnabled = rssEntries.size > 0
+val removeFeedAndSave: (String) -> Unit = { feedUrl: String ->
+    removeFeed(feedUrl)
+    saveEntries()
 }
 
 private fun addNewSchedule(
-    pollingIntervalInSeconds: Int,
     rssEntry: RssEntry,
     firstRssEntryTitle: String
 ) {
     schedule.add(
         RssEntryWithSchedule(
-            currentTimeMillis() + (pollingIntervalInSeconds * 1000),
+            currentTimeMillis() + (rssEntry.pollingIntervalInSeconds * 1000),
             rssEntry,
             firstRssEntryTitle
         )
     )
+    rescheduleTask()
 }
 
 private fun readFirstEntryTitle(feedUrl: String): String {

@@ -12,6 +12,8 @@ repositories {
 
 dependencies {
     implementation("com.apptasticsoftware:rssreader:3.7.0")
+    implementation("net.harawata:appdirs:1.2.2")
+
     testImplementation(kotlin("test"))
 }
 
