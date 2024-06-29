@@ -24,18 +24,12 @@ val schedule = PriorityQueue(compareBy<RssEntryWithSchedule> { it.triggerAtTimes
 val scheduler: ScheduledExecutorService = Executors.newScheduledThreadPool(1)
 var scheduledFuture: ScheduledFuture<*> = scheduler.schedule({}, 5, SECONDS)
 var trayIcon: TrayIcon? = null
+val menuItemEditFeeds = MenuItem("Delete Feeds")
 
 fun main() {
     if (!SystemTray.isSupported()) throw RuntimeException("System tray is not supported on this platform.")
     setupLookAndFeel()
-
-    val actions = mapOf(
-        "Edit Feed" to onEditFeed,
-        "Add Feed" to onAddFeed,
-        "Exit" to onExit
-    )
-
-    trayIcon = createTrayIcon(actions)
+    trayIcon = createTrayIcon()
 }
 
 val onAddFeed = ActionListener { _: ActionEvent -> showAddFeed(getAppIcon(), addNewFeed) }
@@ -55,10 +49,19 @@ private fun setupLookAndFeel() {
     }
 }
 
-fun createTrayIcon(actions: Map<String, ActionListener>): TrayIcon {
+fun createTrayIcon(): TrayIcon {
     val tray = SystemTray.getSystemTray()
 
     val popup = PopupMenu()
+
+    menuItemEditFeeds.addActionListener(onEditFeed)
+    popup.add(menuItemEditFeeds)
+    menuItemEditFeeds.isEnabled = rssEntries.size > 0
+
+    val actions = mapOf(
+        "Add Feed" to onAddFeed,
+        "Exit" to onExit
+    )
 
     for ((name, action) in actions) {
         val menuItem = MenuItem(name)
@@ -90,37 +93,50 @@ val task = Runnable {
     if (currentTime >= nextToRead.triggerAtTimestamp) {
         println("Will read entry.")
         val rssEntry = nextToRead.rssEntry
-        val firstRssEntry = readFirstEntry(rssEntry.url)
-        val firstRssEntryTitle = firstRssEntry.title.orElse("")
-        println("Comparing titles: '${nextToRead.title}' and '$firstRssEntryTitle'")
-        if (!firstRssEntryTitle.equals(nextToRead.title)) {
-            println("Title changed!!!")
-            println("was '${nextToRead.title}' and now is '$firstRssEntryTitle'")
-            trayIcon!!.addActionListener { _: ActionEvent ->
-                firstRssEntry.link.ifPresent {
-                    if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
-                        Desktop.getDesktop().browse(URI(it));
-                    }
+        val maybeFirstRssEntry = readFirstEntry(rssEntry.url)
+        if (maybeFirstRssEntry.isPresent) {
+            val firstRssEntry = maybeFirstRssEntry.get()
+            val firstRssEntryTitle = firstRssEntry.title.orElse("")
+            println("Comparing titles: '${nextToRead.title}' and '$firstRssEntryTitle'")
+            val titleChanged = !firstRssEntryTitle.equals(nextToRead.title)
+            if (titleChanged) {
+                println("Title changed!!!")
+                println("was '${nextToRead.title}' and now is '$firstRssEntryTitle'")
+                showNotification(firstRssEntry)
+                if (!rssEntry.deleteAfterNotification) {
+                    println("Title changed, will Reschedule")
+                    addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, firstRssEntryTitle)
+                } else {
+                    println("Title changed, will NOT Reschedule")
                 }
-            }
-            trayIcon!!.displayMessage(
-                firstRssEntry.title.orElse("No title"),
-                firstRssEntry.description.orElse("No description"),
-                TrayIcon.MessageType.INFO
-            )
-            if (!rssEntry.deleteAfterNotification) {
-                println("Title changed, will Reschedule")
-                addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, firstRssEntryTitle)
             } else {
-                println("Title changed, will NOT Reschedule")
+                println("Title not changed, will reschedule")
+                println("Title not changed, will reschedule")
+                addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, nextToRead.title)
             }
         } else {
-            println("Title not changed, will reschedule")
-            println("Title not changed, will reschedule")
+            println("Something went wrong getting feed, will reschedule")
             addNewSchedule(rssEntry.pollingIntervalInSeconds, rssEntry, nextToRead.title)
         }
     }
     rescheduleTask()
+}
+
+private fun showNotification(firstRssEntry: Item) {
+    val oldActionListeners = trayIcon!!.actionListeners
+    oldActionListeners.forEach { trayIcon!!.removeActionListener(it) }
+    trayIcon!!.addActionListener { _: ActionEvent ->
+        firstRssEntry.link.ifPresent {
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(URI(it));
+            }
+        }
+    }
+    trayIcon!!.displayMessage(
+        firstRssEntry.title.orElse("No title"),
+        firstRssEntry.description.orElse("No description"),
+        TrayIcon.MessageType.INFO
+    )
 }
 
 fun rescheduleTask() {
@@ -136,7 +152,9 @@ fun rescheduleTask() {
 }
 
 
-val onExit = ActionListener { e: ActionEvent ->
+val onExit = ActionListener { _: ActionEvent ->
+    println("Bye bye!")
+    scheduledFuture.cancel(true)
     exitProcess(0)
 }
 
@@ -145,13 +163,13 @@ val addNewFeed:(feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) 
     println("Polling time: $pollingTime seconds")
     println("Disable after notify: $disableAfterNotify")
 
-    val firstRssEntry = readFirstEntry(feedUrl)
+    val firstRssEntryResult = readFirstEntryTitle(feedUrl)
 
     removeFeed(feedUrl)
 
     val rssEntry = RssEntry(feedUrl, pollingTime, disableAfterNotify)
     rssEntries.add(rssEntry)
-    addNewSchedule(pollingTime, rssEntry, firstRssEntry.title.orElse(""))
+    addNewSchedule(pollingTime, rssEntry, firstRssEntryResult)
 
     rescheduleTask()
 
@@ -159,12 +177,15 @@ val addNewFeed:(feedUrl: String, pollingTime: Int, disableAfterNotify: Boolean) 
     println(rssEntries)
     println("schedule")
     println(schedule)
+
+    menuItemEditFeeds.isEnabled = rssEntries.size > 0
 }
 
 val removeFeed:(String)-> Unit = { feedUrl: String ->
     println("Removed '$feedUrl'")
     rssEntries.removeIf { it.url == feedUrl }
     schedule.removeIf {it.rssEntry.url == feedUrl }
+    menuItemEditFeeds.isEnabled = rssEntries.size > 0
 }
 
 private fun addNewSchedule(
@@ -181,11 +202,31 @@ private fun addNewSchedule(
     )
 }
 
-private fun readFirstEntry(feedUrl: String?): Item {
-    val rssReader = RssReader()
-    val items: List<Item> = rssReader.read(feedUrl).toList()
-    val firstRssEntry = items[0]
-    println(firstRssEntry.title.orElse("No title"))
+private fun readFirstEntryTitle(feedUrl: String): String {
+    val maybeFirstRssEntry = readFirstEntry(feedUrl)
+    if (maybeFirstRssEntry.isEmpty) {
+        return ""
+    }
+    val firstRssEntry = maybeFirstRssEntry.get()
+    if (firstRssEntry.title.isEmpty) {
+        return ""
+    }
+    println(firstRssEntry.title.orElse("No title on rss"))
     println(firstRssEntry.description.orElse("No description"))
-    return firstRssEntry
+    return firstRssEntry.title.get()
+}
+
+private fun readFirstEntry(feedUrl: String): Optional<Item> {
+    try {
+        val rssReader = RssReader()
+        val items: List<Item> = rssReader.read(feedUrl).toList()
+        if (items.isEmpty()) {
+            return Optional.empty()
+        }
+        val firstRssEntry = items[0]
+        return Optional.of(firstRssEntry)
+    } catch (e: Exception) {
+        println(e.message)
+        return Optional.empty()
+    }
 }
